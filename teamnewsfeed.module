@@ -1,0 +1,505 @@
+<?php
+
+function teamnewsfeed_menu() {
+
+  $items['crawl/cap'] = array(
+    'title' => t('Crawl Team Caps'),
+    'page callback' => 'teamnewsfeed_crawl_cap',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  
+  $items['crawl/roster/%'] = array(
+    'title' => t('Crawl Team Roster'),
+    'page callback' => 'teamnewsfeed_crawl_roster',
+    'page arguments' => array(2),
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  
+  $items['out/%'] = array(
+    'title' => t('Crawl'),
+    'page callback' => 'teamnewsfeed_out',
+    'access callback' => TRUE,
+    'page arguments' => array(1),
+    'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+
+}
+
+function teamnewsfeed_preprocess_html (&$vars) {
+  if (module_exists('path')) {
+    $alias = drupal_get_path_alias(str_replace('/edit','',$_GET['q']));
+    if ($alias != $_GET['q']) {
+      $template_filename = 'html';
+      foreach (explode('/', $alias) as $path_part) {
+        $template_filename = $template_filename . '__' . $path_part;
+        $vars['theme_hook_suggestions'][] = $template_filename;
+      }
+    }
+  }
+}
+
+function teamnewsfeed_block_info() {    
+  $blocks['team_twitter'] = array(
+    'info' => t('Team Twitter'),
+  );
+  
+  $blocks['reddit'] = array(
+    'info' => t('Reddit'),
+  );
+  
+  $blocks['news'] = array(
+    'info' => t('News'),
+  );
+
+  return $blocks;
+}
+
+function teamnewsfeed_block_view($delta = '') {
+  switch ($delta) {
+    case 'team_twitter':
+      $block['subject'] = t('Twitter');
+      $block['content'] = teamnewsfeed_twitter();
+      break;
+    case 'reddit':
+      $block['subject'] = t('Reddit');
+      $block['content'] = teamnewsfeed_reddit();
+      break;
+    case 'news':
+      $block['subject'] = t('News');
+      $block['content'] = teamnewsfeed_news();
+      break;
+  }
+
+  return $block;
+}
+
+function teamnewsfeed_twitter() {
+  $tid = arg(2);
+  $term = taxonomy_term_load($tid);
+  $twitter = $term->field_twitter['und'][0]['value'];
+  return twitter_pull_render($twitter, null, 100, null, true);
+}
+
+function teamnewsfeed_out($nid = null) {
+  $node = node_load($nid);
+  header('Location: '.$node->field_url['und'][0]['value']);
+  /*
+   ob_start();
+  $headers = get_headers($node->field_url['und'][0]['value']);
+  foreach($headers as $value) {
+     if (strpos($value,'X-Frame-Options') !== false)
+      header('Location: '.$node->field_url['und'][0]['value']);
+  }
+  return ob_get_clean();
+  * */
+}
+
+function teamnewsfeed_news($page = 1) {
+  ob_start();
+    global $user;
+    $user = user_load($user->uid, TRUE);
+    //echo '<pre>'; print_r($user); echo '</pre>';
+    
+    $values = arg(2);
+    if ($values == null) {
+      foreach($user->field_your_teams['und'] as $key => $value)
+        $values[] = $value['tid'];
+    }
+    
+    $start = ($page*10)-10;
+    $end = $page*10;
+    
+    echo '<div class="page-taxonomy-term">';
+    
+    $query = new EntityFieldQuery();
+      $query->entityCondition('entity_type', 'node')
+        ->entityCondition('bundle', 'feed_item')
+        ->propertyCondition('status', 1)
+        ->fieldCondition('field_team', 'tid', $values, 'IN')
+        ->propertyOrderBy('created', 'DESC')
+        ->pager(10);
+      $result = $query->execute();
+      if (isset($result['node'])) {
+        $items_nids = array_keys($result['node']);
+        $items = entity_load('node', $items_nids);
+        foreach($items as $nid => $item) {
+           
+           $parent = node_load($item->field_parent['und'][0]['nid']);
+           $description = strip_tags($item->field_feed_item_description['und'][0]['value']);
+           
+           if (strlen($description) > 400) {
+            $stringCut = substr($description, 0, 400);
+            $description = substr($stringCut, 0, strrpos($stringCut, ' ')).'...'; 
+           }
+           
+           $team = taxonomy_term_load($item->field_team['und'][0]['tid']);
+           $teamLogo = file_create_url($team->field_logo['und'][0]['uri']);
+           //echo '<pre>'; print_r($team); echo '</pre>';
+           echo '<div class="row">';
+             echo '<div class="detailsWrapper"><a href="#" class="details" title="Click To View Summary">+</a></div>';
+             echo '<div class="titleWrapper"><div class="title"><a href="'.$item->field_url['und'][0]['value'].'" target="_BLANK">'.$item->title.'</a></div><div class="teamName">'.$team->name.'</div><hr class="clear"/></div>';
+             echo '<div class="description">'.$description.'</div>';
+             echo '<div class="created">'.time_ago($item->created, 1).' ago</div>';
+             echo '<div class="parent">'.$parent->title.'</div>';
+           echo '</div>';
+        }
+      }
+    
+    echo '</div>';
+  return ob_get_clean();
+}
+
+function time_ago($tm, $rcs = 0) {
+   $cur_tm = time(); $dif = $cur_tm-$tm;
+   $pds = array('second','minute','hour','day','week','month','year','decade');
+   $lngh = array(1,60,3600,86400,604800,2630880,31570560,315705600);
+   for($v = sizeof($lngh)-1; ($v >= 0)&&(($no = $dif/$lngh[$v])<=1); $v--); if($v < 0) $v = 0; $_tm = $cur_tm-($dif%$lngh[$v]);
+
+   $no = floor($no); if($no <> 1) $pds[$v] .='s'; $x=sprintf("%d %s ",$no,$pds[$v]);
+   if(($rcs > 0)&&($v >= 1)&&(($cur_tm-$_tm) > 0)) $x .= time_ago($_tm, --$rcs);
+   return $x;
+}
+
+function teamnewsfeed_reddit() {
+  $tid = arg(2);
+  ob_start();
+  $term = taxonomy_term_load($tid);
+  $url = $term->field_reddit['und'][0]['value'];
+  $hot = simplexml_load_file($url.'.rss');
+  $new = simplexml_load_file($url.'/new/.rss');
+  $top = simplexml_load_file($url.'/top/.rss');
+  $namespaces = $hot->getNamespaces(true);
+  
+  //echo '<pre>'; print_r($term);
+  echo '<div class="submenu"><h3 id="topReddit">Top</h3><h3 id="newReddit">New</h3><h3 id="hotReddit" class="active">Hot</h3></div>';
+  //echo '<pre>'; print_r($xml->channel->item);
+  
+  echo '<div class="view-content">';
+  
+  echo '<div class="hotReddit redditBlock">';
+  foreach($hot->channel->item as $key => $item) {
+    $thumb = '/sites/all/themes/tnf/images/redditHolder.png';
+    if (isset($namespaces['media'])) {
+      $thumbnail = $item->children($namespaces['media']);
+      if ($thumbnail->thumbnail) {
+        $thumb = strval($thumbnail->thumbnail->attributes());
+      }
+    }
+    echo '<div class="row">';
+      echo '<img src="'.$thumb.'" alt="" class="thumb" />';
+      //echo '<div class="views-field-created">'.format_interval((time() - strtotime($item->pubDate)) , 2).' ago</div>';
+      echo '<div class="views-field-title"><a href="'.$item->link.'" target="_blank">'.$item->title.'</a></div>';
+    echo '</div>';
+  }
+  echo '</div>';
+  
+  echo '<div class="newReddit redditBlock">';
+  foreach($new->channel->item as $key => $item) {
+    //$info = simplexml_load_file($item->link.'.rss');
+    $thumb = '/sites/all/themes/tnf/images/redditHolder.png';
+    if (isset($namespaces['media'])) {
+      $thumbnail = $item->children($namespaces['media']);
+      if ($thumbnail->thumbnail) {
+        $thumb = strval($thumbnail->thumbnail->attributes());
+      } 
+    }
+    echo '<div class="row">';
+      echo '<img src="'.$thumb.'" alt="" class="thumb" />';
+      //echo '<div class="views-field-created">'.format_interval((time() - strtotime($item->pubDate)) , 2).' ago</div>';
+      echo '<div class="views-field-title"><a href="'.$item->link.'" target="_blank">'.$item->title.'</a></div>';
+      //echo '<div class="views-field-description">'.$item->description.'</div>';
+    echo '</div>';
+  }
+  echo '</div>';
+  
+  echo '<div class="topReddit redditBlock">';
+  foreach($top->channel->item as $key => $item) {
+    //print_r($value);
+    $thumb = '/sites/all/themes/tnf/images/redditHolder.png';
+    if (isset($namespaces['media'])) {
+      $thumbnail = $item->children($namespaces['media']);
+      if ($thumbnail->thumbnail) {
+        $thumb = strval($thumbnail->thumbnail->attributes());
+      }
+    }
+    echo '<div class="row">';
+      echo '<img src="'.$thumb.'" alt="" class="thumb" />';
+      //echo '<div class="views-field-created">'.format_interval((time() - strtotime($item->pubDate)) , 2).' ago</div>';
+      echo '<div class="views-field-title"><a href="'.$item->link.'" target="_blank">'.$item->title.'</a></div>';
+    echo '</div>';
+  }
+  echo '</div>';
+  
+  echo '</div>';
+  
+  //echo '<div class="hotReddit redditBlock">'.views_embed_view('reddit', 'hot', $tid).'</div>';
+  //echo '<div class="newReddit redditBlock">'.views_embed_view('reddit', 'new', $tid).'</div>';
+  //echo '<div class="topReddit redditBlock">'.views_embed_view('reddit', 'top', $tid).'</div>';
+  
+  return ob_get_clean();
+}
+
+function teamnewsfeed_preprocess_block(&$variables) {
+  if ($variables['block']->module == 'teamnewsfeed' && $variables['block']->delta == 'team_twitter') {
+    $variables['block_html_id'] = drupal_html_id('twitter');
+  }
+  if ($variables['block']->module == 'teamnewsfeed' && $variables['block']->delta == 'reddit') {
+    $variables['block_html_id'] = drupal_html_id('reddit');
+  }
+  if ($variables['block']->module == 'views' && $variables['block']->delta == 'team_feeds-block_1') {
+    $variables['block_html_id'] = drupal_html_id('news');
+  }
+  if ($variables['block']->module == 'teamnewsfeed' && $variables['block']->delta == 'news') {
+    $variables['block_html_id'] = drupal_html_id('news');
+  }
+  if ($variables['block']->module == 'views' && $variables['block']->delta == 'roster-block_1') {
+    $variables['block_html_id'] = drupal_html_id('roster');
+  }
+  if ($variables['block']->module == 'views' && $variables['block']->delta == 'cap_space-block') {
+    $variables['block_html_id'] = drupal_html_id('capspace');
+  }
+}
+
+function teamnewsfeed_crawl_cap(){
+  
+  ob_start();
+  
+  include('simple_html_dom.php');
+  
+  
+  $html = file_get_html('http://overthecap.com/salary-cap-space/');
+  $teams = $html->find('#y2014 table.sortable');
+  
+  $fields = array(0 => 'name', 1 => 'cap_space', 2 => 'team_cap', 3 => 'cap_spending', 4 => 'dead_money');
+  
+  $count = 0;
+  
+  foreach($teams[0]->find('tr') as $teamNum => $team) {
+    if ($teamNum > 0) {
+      echo '<div>';
+      foreach($team->find('td') as $key => $value) {
+        if ($key == 0) {
+          $url = $value->find('a');
+          echo 'link: '.$url[0]->href.'<br/>';
+          $link = 'http://overthecap.com'.$url[0]->href;
+        }
+        
+        $value = trim($value->plaintext, '*');
+        $value = str_replace('$', '', $value);
+        $value = str_replace(',', '', $value);
+        if ($fields[$key] == 'name') {
+          $tree = taxonomy_get_tree(2);
+          foreach($tree as $term) {
+            if (strpos($term->name, $value) !== FALSE) {
+              $value = '<a href="/taxonomy/term/'.$term->tid.'">'.$value.'</a>';
+              $team = taxonomy_term_load($term->tid);
+            }
+          }
+        }
+        
+        if ($fields[$key] == 'cap_spending')
+          $team->field_cap_spending['und'][0]['value'] = $value;
+        if ($fields[$key] == 'dead_money')
+          $team->field_dead_money['und'][0]['value'] = $value;
+        if ($fields[$key] == 'cap_space')
+          $team->field_cap_space['und'][0]['value'] = $value;
+        
+        echo $fields[$key].': '.$value.'<br/>';
+        $$fields[$key] = $value;
+      }
+      
+      $team->field_cap_last_updated['und'][0]['value'] = time();
+      taxonomy_term_save($team);
+      
+    /*if ($count == 0) {
+      $html2 = file_get_html($link);
+      $players = $html2->find('table.sortable');
+      
+      $fields2 = array(0 => 'name', 1 => 'base_salary', 2 => 'prorated_bonus', 3 => 'roster_bonus', 4 => 'workout_bonus', 5 => 'cap_number', 6 => 'dead_money', 7 => 'cap_savings');
+      
+      foreach($players[0]->find('tr') as $playerNum => $player) {
+        $node = new stdClass();
+        $node->type = "player";
+        node_object_prepare($node); // Sets some defaults. Invokes hook_prepare() and hook_node_prepare().
+        $node->language = LANGUAGE_NONE; // Or e.g. 'en' if locale is enabled
+        $node->uid = 1;
+        $node->status = 1; //(1 or 0): published or not
+        $node->promote = 0; //(1 or 0): promoted to front page
+        $node->comment = 0; // 0 = comments disabled, 1 = read only, 2 = read/write
+        
+        if ($playerNum > 2) {
+          echo '<div style="padding-left: 2em;border-bottom: 1px dashed #ccc;margin-bottom: 1em;padding-bottom: 1em;">';
+          foreach($player->find('td') as $key2 => $value2) {
+            if ($key2 == 0) {
+              //echo '<pre>'; print_r($team);
+              $url2 = $value2->find('a');
+              echo 'name: '.$value2->plaintext.'</br>';
+              $node->title = $value2->plaintext;
+              echo 'team: '.$team->name.'</br>';
+              $node->field_team = array('und' => array(0 => array('tid' => $team->tid)));
+              echo 'link: '.$url2[0]->href.'<br/>';
+              $link2 = 'http://overthecap.com'.$url2[0]->href;
+              $url = explode('&amp;', $url2[0]->href);
+              $position = str_replace('Position=', '', $url[1]);
+              $node->field_position = array('und' => array(0 => array('value' => $position)));
+              echo 'position: '.$position.'</br>';
+              //$html3 = file_get_html($link2);
+              
+              //$stats = $html3->find('#content-main');
+              //print_r($stats);
+              //echo 'STATS: '.$stats.'</br>';
+              //print_r($url);
+            }
+            
+            $value2 = trim($value2->plaintext, '*');
+            $value2 = preg_replace('[\D]', '', $value2);
+            $field = 'field_'.$fields2[$key2];
+            $node->$field = array('und' => array(0 => array('value' => $value2)));
+            echo $fields2[$key2].': '.$value2.'<br/>';
+          }
+          
+          //print_r($fields2);
+          echo '</div>';
+        }
+        if (isset($node->title)) {
+          //echo '<pre>'; print_r($node); echo '</pre>';
+          $efq = new EntityFieldQuery();
+          $result = $efq->entityCondition('entity_type', 'node')
+            ->entityCondition('bundle', 'player')
+            ->propertyCondition('title', $node->title)
+            ->fieldCondition('field_team', 'tid', $team->tid, '=')
+            ->execute();
+          if (empty($result['node'])) {
+            $node = node_submit($node);
+            node_save($node);
+            echo 'new<br/>';
+          }
+          else
+            echo 'update<br/>';
+        }
+      }
+      $count = 1;
+    }*/
+      
+      echo '</div>';
+      echo '<hr/>';
+    }
+  }
+  
+  cache_clear_all();
+  return ob_get_clean();
+}
+
+function teamnewsfeed_crawl_roster($league = 'nfl'){
+  
+  ob_start();
+  
+  include('simple_html_dom.php');
+  
+  $terms = taxonomy_get_tree(2);
+  $count = 0;
+  foreach($terms as $item) {
+     $term = taxonomy_term_load($item->tid);
+     if ($term->field_team_website != array()) {
+        $roster_link = $term->field_team_website['und'][0]['value'].'/team/roster.html';
+         
+         if (!file_get_contents($roster_link))
+            $html = file_get_html($term->field_team_website['und'][0]['value'].'/team/player-roster.html');
+         else
+            $html = file_get_html($roster_link);
+         
+         if (is_object($html)) {
+         $players = $html->find('.bd table');
+         
+         $fields = array(0 => 'field_number', 1 => 'title', 2 => 'field_position', 3 => 'field_height', 4 => 'field_weight', 5 => 'field_age', 6 => 'field_experience', 7 => 'field_college');
+         $teamID = array();
+         
+         foreach($players[0]->find('tr') as $playerNum => $player) {
+          if ($playerNum > 0) {
+            echo '<div>';
+            echo 'team: '.$term->tid.' - '.$term->name.'<br/>';
+              $node = new stdClass();
+              $node->type = "player";
+              node_object_prepare($node); // Sets some defaults. Invokes hook_prepare() and hook_node_prepare().
+              $node->language = LANGUAGE_NONE; // Or e.g. 'en' if locale is enabled
+              $node->uid = 1;
+              $node->status = 1; //(1 or 0): published or not
+              $node->promote = 0; //(1 or 0): promoted to front page
+              $node->comment = 0; // 0 = comments disabled, 1 = read only, 2 = read/write
+              $node->field_team = array('und' => array(0 => array('tid' => $term->tid)));
+            foreach($player->find('td') as $key => $value) {
+              
+              $value = trim($value->plaintext, '*');
+              $value = trim($value);
+              $value = str_replace('$', '', $value);
+              $value = str_replace(',', '', $value);
+
+              echo $fields[$key].': '.$value.'<br/>';
+              $$fields[$key] = $value;
+              $field = $fields[$key];
+              if ($field == 'title')
+               $node->$field = $value;
+              elseif ($value != '')
+               $node->$field = array('und' => array(0 => array('value' => $value)));
+            }
+            
+            $pid = md5($title.$field_college);
+            echo 'ID: '.$pid;
+            $teamID[] = $pid;
+            $node->field_id = array('und' => array(0 => array('value' => $pid)));
+            
+              
+              if (isset($node->title)) {
+                //echo '<pre>'; print_r($node); echo '</pre>';
+                $efq = new EntityFieldQuery();
+                $result = $efq->entityCondition('entity_type', 'node')
+                  ->entityCondition('bundle', 'player')
+                  ->propertyCondition('title', $node->title)
+                  ->fieldCondition('field_team', 'tid', $term->tid, '=')
+                  ->execute();
+                if (empty($result['node'])) {
+                  $node = node_submit($node);
+                  node_save($node);
+                  echo '<div style="color:green">ADD</div>';
+                }
+                else
+                  echo '<div style="color:orange">UPDATE</div>';
+              }
+              
+            
+            echo '</div>';
+            echo '<hr/>';
+          }
+        }
+     
+        $query = new EntityFieldQuery();
+         $query->entityCondition('entity_type', 'node')
+           ->entityCondition('bundle', 'player')
+           ->propertyCondition('status', 1)
+           ->fieldCondition('field_team', 'tid', $term->tid, '=')
+           ->fieldCondition('field_id', 'value', $teamID, 'NOT IN');
+         $result = $query->execute();
+         if (isset($result['node'])) {
+            $dl_nids = array_keys($result['node']);
+            foreach($dl_nids as $dl_nid) {
+               echo '<div style="color:red">DELETE</div> #'.$dl_nid;
+               node_delete($dl_nid);
+            }
+         }
+         else {
+            echo 'none to delete';
+         }
+         echo '<pre>';
+         print_r($teamID);
+         echo '</pre>';
+       }
+      }
+  }
+  
+  cache_clear_all();
+  return ob_get_clean();
+}

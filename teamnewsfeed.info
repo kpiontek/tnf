@@ -1,0 +1,4 @@
+name = Team News Feed
+description = [teamnewsfeed] Custom module
+package = Custom
+core = 7.x
